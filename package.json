@@ -1,0 +1,25 @@
+{
+  "name": "scrapers-dashboard",
+  "version": "1.0.0",
+  "description": "A pluggable scraper + dashboard mono-app. Demonstrates 4 real-world data sources (PTT, crypto markets, e-commerce, news) feeding one SQLite-backed visualization.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "scrape:ptt": "node src/runScraper.js ptt",
+    "scrape:crypto": "node src/runScraper.js crypto",
+    "scrape:news": "node src/runScraper.js news",
+    "scrape:shopee": "node src/runScraper.js shopee",
+    "scrape:all": "node src/runScraper.js all"
+  },
+  "keywords": ["scraper", "dashboard", "ptt", "crypto", "shopee", "node", "sqlite"],
+  "author": "HsiaWei0302",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.7",
+    "ccxt": "^4.5.54",
+    "cheerio": "^1.0.0",
+    "express": "^4.21.0",
+    "rss-parser": "^3.13.0",
+    "sql.js": "^1.10.3"
+  }
+}

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Scrapers Dashboard · Wei</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9; --muted:#8b949e; --accent:#58a6ff; --green:#3fb950; --red:#f85149; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif; background:var(--bg); color:var(--text); margin:0; padding:24px; }
+  header { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; }
+  header h1 { margin:0; font-size:24px; font-weight:600; }
+  header small { color:var(--muted); }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:20px; }
+  .card h2 { margin:0 0 12px; font-size:16px; display:flex; align-items:center; gap:8px; }
+  .card .meta { color:var(--muted); font-size:12px; margin-bottom:12px; }
+  .row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:13px; gap:12px; }
+  .row:last-child { border-bottom:none; }
+  .row .ttl { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row a { color:var(--accent); text-decoration:none; }
+  .row a:hover { text-decoration:underline; }
+  .pos { color:var(--green); }
+  .neg { color:var(--red); }
+  button { background:var(--accent); color:#0d1117; border:none; border-radius:6px; padding:6px 14px; cursor:pointer; font-size:12px; font-weight:600; }
+  button:hover { opacity:0.85; }
+  .badge { background:var(--border); padding:2px 8px; border-radius:4px; font-size:11px; color:var(--muted); }
+  .tabs { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+  .tab { background:var(--panel); border:1px solid var(--border); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:13px; color:var(--muted); }
+  .tab.active { color:var(--text); border-color:var(--accent); }
+  canvas { background:var(--bg); border-radius:6px; margin-top:8px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>☕ Scrapers Dashboard</h1>
+    <small>4 data sources, one SQLite store, live dashboard. — <a href="https://github.com/HsiaWei0302" style="color:var(--accent)">HsiaWei0302</a></small>
+  </div>
+  <div id="status" class="badge">connecting…</div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-tab="overview">Overview</div>
+  <div class="tab" data-tab="ptt">PTT</div>
+  <div class="tab" data-tab="crypto">Crypto</div>
+  <div class="tab" data-tab="news">News</div>
+  <div class="tab" data-tab="shopee">Shopee</div>
+</div>
+
+<div id="content"></div>
+
+<script>
+const $ = sel => document.querySelector(sel);
+const fmtTime = ts => new Date(ts).toLocaleString('zh-TW', { hour12: false });
+
+async function api(path, options = {}) {
+  const r = await fetch(path, options);
+  if (!r.ok) throw new Error('API ' + r.status);
+  return r.json();
+}
+
+async function loadOverview() {
+  const [sources, logs] = await Promise.all([api('/api/sources'), api('/api/logs')]);
+  const sMap = Object.fromEntries(sources.map(s => [s.source, s]));
+  const names = ['ptt','crypto','news','shopee'];
+
+  let html = '<div class="grid">';
+  for (const n of names) {
+    const s = sMap[n] || { count: 0, latest: 0 };
+    html += `
+      <div class="card">
+        <h2>${iconFor(n)} ${n.toUpperCase()} <span class="badge">${s.count} records</span></h2>
+        <div class="meta">Last record: ${s.latest ? fmtTime(s.latest) : '—'}</div>
+        <button onclick="triggerScrape('${n}')">↻ Refresh now</button>
+      </div>`;
+  }
+  html += '</div><div class="card" style="margin-top:16px"><h2>📜 Recent scrape log</h2>';
+  for (const l of logs.slice(0, 10)) {
+    const dur = l.finished_at ? `${((l.finished_at - l.started_at) / 1000).toFixed(1)}s` : 'running…';
+    const status = l.error ? `<span class="neg">✗ ${l.error}</span>` : `<span class="pos">✓ ${l.items_added} items</span>`;
+    html += `<div class="row"><div class="ttl">[${l.source}] ${fmtTime(l.started_at)} — ${dur}</div><div>${status}</div></div>`;
+  }
+  html += '</div>';
+  $('#content').innerHTML = html;
+}
+
+function iconFor(n) {
+  return { ptt: '💬', crypto: '🪙', news: '📰', shopee: '🛒' }[n] || '📦';
+}
+
+async function triggerScrape(name) {
+  $('#status').textContent = `Scraping ${name}…`;
+  try {
+    const r = await api('/api/scrape/' + name, { method: 'POST' });
+    $('#status').textContent = `✓ ${name}: ${r.count} new`;
+  } catch (e) {
+    $('#status').textContent = `✗ ${e.message}`;
+  }
+  setTimeout(() => render(), 1200);
+}
+
+async function loadPTT() {
+  const rec = await api('/api/records/ptt?limit=60');
+  const byBoard = {};
+  rec.forEach(r => { (byBoard[r.board] = byBoard[r.board] || []).push(r); });
+  let html = '<div class="grid">';
+  for (const [board, items] of Object.entries(byBoard)) {
+    const totalPush = items.reduce((s, r) => s + (r.pushCount || 0), 0);
+    html += `<div class="card"><h2>💬 ${board} <span class="badge">${items.length} posts</span></h2>
+      <div class="meta">Total push: ${totalPush}</div>`;
+    items.slice(0, 12).forEach(r => {
+      const p = r.pushCount;
+      const cls = p > 0 ? 'pos' : p < 0 ? 'neg' : '';
+      html += `<div class="row"><div class="ttl"><a href="${r.link}" target="_blank">${escapeHTML(r.title)}</a></div><div class="${cls}">${p === 100 ? '爆' : p === -100 ? 'XX' : p}</div></div>`;
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  $('#content').innerHTML = html;
+}
+
+async function loadCrypto() {
+  const rec = await api('/api/records/crypto?limit=20');
+  let html = '<div class="grid">';
+  rec.forEach(r => {
+    const cls = (r.changePercent || 0) >= 0 ? 'pos' : 'neg';
+    html += `<div class="card"><h2>🪙 ${r.symbol}</h2>
+      <div style="font-size:28px;font-weight:600">${r.last}</div>
+      <div class="${cls}" style="font-size:14px">${(r.changePercent || 0).toFixed(2)}% / 24h</div>
+      <div class="meta">H: ${r.high24h} · L: ${r.low24h} · Vol: ${r.volume24h?.toFixed(0)}</div></div>`;
+  });
+  html += '</div>';
+  $('#content').innerHTML = html;
+}
+
+async function loadNews() {
+  const rec = await api('/api/records/news?limit=40');
+  const bySrc = {};
+  rec.forEach(r => { (bySrc[r.source] = bySrc[r.source] || []).push(r); });
+  let html = '<div class="grid">';
+  for (const [src, items] of Object.entries(bySrc)) {
+    html += `<div class="card"><h2>📰 ${src} <span class="badge">${items.length}</span></h2>`;
+    items.slice(0, 10).forEach(r => {
+      html += `<div class="row"><div class="ttl"><a href="${r.link}" target="_blank">${escapeHTML(r.title)}</a></div></div>`;
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  $('#content').innerHTML = html;
+}
+
+async function loadShopee() {
+  const rec = await api('/api/records/shopee?limit=40');
+  if (!rec.length) {
+    $('#content').innerHTML = '<div class="card"><h2>🛒 Shopee</h2><div class="meta">No data yet. Click "Refresh now" on the Overview tab. (Note: Shopee aggressively blocks bots, expect failures.)</div></div>';
+    return;
+  }
+  const byKw = {};
+  rec.forEach(r => { (byKw[r.keyword] = byKw[r.keyword] || []).push(r); });
+  let html = '<div class="grid">';
+  for (const [kw, items] of Object.entries(byKw)) {
+    html += `<div class="card"><h2>🛒 ${kw} <span class="badge">${items.length} items</span></h2>`;
+    items.slice(0, 8).forEach(r => {
+      html += `<div class="row"><div class="ttl"><a href="${r.link}" target="_blank">${escapeHTML(r.name)}</a></div><div>NT$${r.price?.toFixed(0)} · sold ${r.sold}</div></div>`;
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  $('#content').innerHTML = html;
+}
+
+function escapeHTML(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
+const TABS = { overview: loadOverview, ptt: loadPTT, crypto: loadCrypto, news: loadNews, shopee: loadShopee };
+let currentTab = 'overview';
+
+async function render() {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === currentTab));
+  try {
+    await TABS[currentTab]();
+    $('#status').textContent = '● connected';
+  } catch (e) {
+    $('#status').textContent = '✗ ' + e.message;
+  }
+}
+
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  currentTab = t.dataset.tab;
+  render();
+}));
+
+render();
+setInterval(render, 30000);
+</script>
+</body>
+</html>
